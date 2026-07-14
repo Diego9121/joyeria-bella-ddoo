@@ -1,4 +1,5 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { generarSiguienteCodigo } from './productCode';
 
 function createSupabaseClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co';
@@ -42,14 +43,13 @@ export async function generateProductCode(moduloId: string, subcategoriaId?: str
     }
   }
   
-  const { count } = await supabase
+  const { data: productosExistentes } = await supabase
     .from('productos')
-    .select('*', { count: 'exact', head: true })
-    .gte('codigo', `${prefijo}000`)
-    .lt('codigo', `${prefijo}999`);
-  
-  const nextNumber = (count || 0) + 1;
-  return `${prefijo}${String(nextNumber).padStart(3, '0')}`;
+    .select('codigo')
+    .like('codigo', `${prefijo}%`);
+
+  const codigosExistentes = (productosExistentes || []).map(p => p.codigo);
+  return generarSiguienteCodigo(codigosExistentes, prefijo);
 }
 
 export async function updateProductCodesByModulo(moduloId: string, oldPrefijo: string, newPrefijo: string): Promise<void> {
@@ -185,6 +185,8 @@ export interface CotizacionProducto {
   nombre: string;
   precio: number;
   cantidad: number;
+  modulo_id?: string;
+  subcategoria_id?: string | null;
 }
 
 export interface AdminUser {

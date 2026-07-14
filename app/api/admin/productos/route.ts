@@ -1,7 +1,12 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { generarSiguienteCodigo } from '@/lib/productCode';
 
 export const dynamic = 'force-dynamic';
+
+// Código de error de Postgres para violación de restricción UNIQUE.
+const UNIQUE_VIOLATION = '23505';
+const MAX_INTENTOS_CODIGO = 5;
 
 function getSupabaseAdmin() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -12,6 +17,46 @@ function getSupabaseAdmin() {
   return createClient(supabaseUrl, serviceKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
+}
+
+async function obtenerPrefijo(
+  supabaseAdmin: SupabaseClient,
+  moduloId: string,
+  subcategoriaId: string | null | undefined
+): Promise<string | null> {
+  const { data: modulo } = await supabaseAdmin
+    .from('modulos')
+    .select('prefijo_codigo')
+    .eq('id', moduloId)
+    .single();
+
+  if (!modulo) return null;
+
+  let prefijo = modulo.prefijo_codigo;
+
+  if (subcategoriaId) {
+    const { data: subcategoria } = await supabaseAdmin
+      .from('subcategorias')
+      .select('prefijo_codigo')
+      .eq('id', subcategoriaId)
+      .single();
+
+    if (subcategoria?.prefijo_codigo) {
+      prefijo = prefijo + subcategoria.prefijo_codigo;
+    }
+  }
+
+  return prefijo;
+}
+
+async function regenerarCodigo(supabaseAdmin: SupabaseClient, prefijo: string): Promise<string> {
+  const { data } = await supabaseAdmin
+    .from('productos')
+    .select('codigo')
+    .like('codigo', `${prefijo}%`);
+
+  const codigosExistentes = (data || []).map((p: { codigo: string }) => p.codigo);
+  return generarSiguienteCodigo(codigosExistentes, prefijo);
 }
 
 export async function GET(request: Request) {
@@ -93,18 +138,36 @@ export async function POST(request: Request) {
 
       return NextResponse.json({ success: true, productos: data, count: data?.length || 0 });
     } else {
-      // Insert individual
-      const { data, error } = await supabaseAdmin
-        .from('productos')
-        .insert(body)
-        .select()
-        .single();
+      // Insert individual, con reintento si el código ya fue tomado
+      // por otra petición concurrente (requiere restricción UNIQUE en
+      // productos.codigo; ver supabase/migrations/003_add_unique_constraint_codigo.sql).
+      let intento = 0;
 
-      if (error) {
-        return NextResponse.json({ error: error.message }, { status: 500 });
+      while (true) {
+        const { data, error } = await supabaseAdmin
+          .from('productos')
+          .insert(body)
+          .select()
+          .single();
+
+        if (!error) {
+          return NextResponse.json({ success: true, producto: data });
+        }
+
+        const esConflictoDeCodigo = error.code === UNIQUE_VIOLATION && /codigo/i.test(error.message || '');
+        intento++;
+
+        if (!esConflictoDeCodigo || intento >= MAX_INTENTOS_CODIGO) {
+          return NextResponse.json({ error: error.message }, { status: 500 });
+        }
+
+        const prefijo = await obtenerPrefijo(supabaseAdmin, body.modulo_id, body.subcategoria_id);
+        if (!prefijo) {
+          return NextResponse.json({ error: error.message }, { status: 500 });
+        }
+
+        body.codigo = await regenerarCodigo(supabaseAdmin, prefijo);
       }
-
-      return NextResponse.json({ success: true, producto: data });
     }
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
