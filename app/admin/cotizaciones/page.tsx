@@ -37,15 +37,24 @@ export default function CotizacionesAdmin() {
   async function loadData() {
     const [cotizacionesRes, productosRes, modulosRes, subcategoriasRes] = await Promise.all([
       fetch('/api/admin/cotizaciones'),
-      fetch('/api/admin/productos').then(r => r.json()),
-      fetch('/api/admin/modulos?tipo=modulos').then(r => r.json()),
-      fetch('/api/admin/modulos?tipo=subcategorias').then(r => r.json()),
+      fetch('/api/admin/productos'),
+      fetch('/api/admin/modulos?tipo=modulos'),
+      fetch('/api/admin/modulos?tipo=subcategorias'),
     ]);
+
+    if (!cotizacionesRes.ok || !productosRes.ok || !modulosRes.ok || !subcategoriasRes.ok) {
+      console.error('Error al cargar cotizaciones');
+    }
+
     const cotizacionesData = await cotizacionesRes.json();
+    const productosData = await productosRes.json();
+    const modulosData = await modulosRes.json();
+    const subcategoriasData = await subcategoriasRes.json();
+
     if (cotizacionesData.cotizaciones) setCotizaciones(cotizacionesData.cotizaciones);
-    if (productosRes.productos) setProductosStock(productosRes.productos);
-    if (modulosRes.data) setModulos(modulosRes.data);
-    if (subcategoriasRes.data) setSubcategorias(subcategoriasRes.data);
+    if (productosData.productos) setProductosStock(productosData.productos);
+    if (modulosData.data) setModulos(modulosData.data);
+    if (subcategoriasData.data) setSubcategorias(subcategoriasData.data);
     setLoading(false);
   }
 
@@ -100,24 +109,40 @@ export default function CotizacionesAdmin() {
     const cotizacion = cotizaciones.find(c => c.id === id);
     if (!cotizacion) return;
 
-    await fetch('/api/admin/cotizaciones', {
+    const res = await fetch('/api/admin/cotizaciones', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id, estado: nuevoEstado, productos: cotizacion.productos }),
     });
 
-    const productosRes = await fetch('/api/admin/productos').then(r => r.json());
-    if (productosRes.productos) setProductosStock(productosRes.productos);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      alert(data.error || 'No se pudo actualizar el estado de la cotización.');
+      return;
+    }
+
+    const productosRes = await fetch('/api/admin/productos');
+    if (productosRes.ok) {
+      const productosData = await productosRes.json();
+      if (productosData.productos) setProductosStock(productosData.productos);
+    }
     loadData();
   };
 
   const deleteCotizacion = async (id: string) => {
     if (!confirm('¿Eliminar esta cotización?')) return;
 
-    await fetch(`/api/admin/cotizaciones?id=${id}`, { method: 'DELETE' });
+    const res = await fetch(`/api/admin/cotizaciones?id=${id}`, { method: 'DELETE' });
+    if (!res.ok) {
+      alert('No se pudo eliminar la cotización. Intenta de nuevo.');
+      return;
+    }
 
-    const productosRes = await fetch('/api/admin/productos').then(r => r.json());
-    if (productosRes.productos) setProductosStock(productosRes.productos);
+    const productosRes = await fetch('/api/admin/productos');
+    if (productosRes.ok) {
+      const productosData = await productosRes.json();
+      if (productosData.productos) setProductosStock(productosData.productos);
+    }
     loadData();
   };
 

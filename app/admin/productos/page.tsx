@@ -56,6 +56,10 @@ function ProductosAdminContent() {
     if (filterSubcategoria) params.set('subcategoria', filterSubcategoria);
     
     const res = await fetch(`/api/admin/productos?${params}`);
+    if (!res.ok) {
+      console.error('Error al cargar el total de productos');
+      return;
+    }
     const data = await res.json();
     setTotalProducts(data.total || 0);
   }
@@ -70,6 +74,11 @@ function ProductosAdminContent() {
     if (filterSubcategoria) params.set('subcategoria', filterSubcategoria);
     
     const res = await fetch(`/api/admin/productos?${params}`);
+    if (!res.ok) {
+      console.error('Error al cargar productos');
+      setLoading(false);
+      return;
+    }
     const data = await res.json();
     if (data.productos) setProductos(data.productos);
     setLoading(false);
@@ -80,6 +89,10 @@ function ProductosAdminContent() {
       fetch('/api/admin/modulos?tipo=modulos'),
       fetch('/api/admin/modulos?tipo=subcategorias'),
     ]);
+    if (!modulosRes.ok || !subcategoriasRes.ok) {
+      console.error('Error al cargar módulos y subcategorías');
+      return;
+    }
     const modulosData = await modulosRes.json();
     const subcategoriasData = await subcategoriasRes.json();
     if (modulosData.data) setModulos(modulosData.data);
@@ -99,17 +112,25 @@ function ProductosAdminContent() {
 
   const deleteProduct = async (id: string) => {
     if (!confirm('¿Estás seguro de eliminar este producto?')) return;
-    await fetch(`/api/admin/productos?id=${id}`, { method: 'DELETE' });
+    const res = await fetch(`/api/admin/productos?id=${id}`, { method: 'DELETE' });
+    if (!res.ok) {
+      alert('No se pudo eliminar el producto. Intenta de nuevo.');
+      return;
+    }
     loadTotalCount();
     loadProductsPage(currentPage);
   };
 
   const toggleActivo = async (product: Producto) => {
-    await fetch('/api/admin/productos', {
+    const res = await fetch('/api/admin/productos', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: product.id, activo: !product.activo }),
     });
+    if (!res.ok) {
+      alert('No se pudo actualizar el producto. Intenta de nuevo.');
+      return;
+    }
     loadProductsPage(currentPage);
   };
 
@@ -383,7 +404,11 @@ function NuevoModuloModal({ onClose, onSave }: NuevoModuloModalProps) {
         body: JSON.stringify({ tipo: 'modulo', nombre, prefijo_codigo: prefijo }),
       });
       const data = await res.json();
-      if (data.success) onSave(data.data);
+      if (res.ok && data.success) {
+        onSave(data.data);
+      } else {
+        alert(data.error || 'Error al crear módulo');
+      }
     } catch (err) {
       alert('Error al crear módulo');
     }
@@ -453,7 +478,11 @@ function NuevaSubcategoriaModal({ modulos, onClose, onSave }: NuevaSubcategoriaM
         body: JSON.stringify({ tipo: 'subcategoria', nombre, modulo_id: moduloId, prefijo_codigo: prefijo || null }),
       });
       const data = await res.json();
-      if (data.success) onSave(data.data);
+      if (res.ok && data.success) {
+        onSave(data.data);
+      } else {
+        alert(data.error || 'Error al crear subcategoría');
+      }
     } catch (err) {
       alert('Error al crear subcategoría');
     }

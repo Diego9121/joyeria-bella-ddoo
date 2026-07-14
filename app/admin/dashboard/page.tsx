@@ -21,10 +21,17 @@ export default function Dashboard() {
   }, []);
 
   async function loadStats() {
-    const [productosRes, cotizacionesRes] = await Promise.all([
-      fetch('/api/admin/productos?limit=1000').then(r => r.json()),
-      fetch('/api/admin/cotizaciones').then(r => r.json()),
+    const [productosResRaw, cotizacionesResRaw] = await Promise.all([
+      fetch('/api/admin/productos?limit=1000'),
+      fetch('/api/admin/cotizaciones'),
     ]);
+
+    if (!productosResRaw.ok || !cotizacionesResRaw.ok) {
+      console.error('Error al cargar las estadísticas del dashboard');
+    }
+
+    const productosRes = await productosResRaw.json();
+    const cotizacionesRes = await cotizacionesResRaw.json();
 
     if (productosRes.productos) {
       const productos = productosRes.productos;
@@ -244,6 +251,10 @@ function CotizacionesRecientes() {
 
   async function loadCotizaciones() {
     const res = await fetch('/api/admin/cotizaciones');
+    if (!res.ok) {
+      console.error('Error al cargar las cotizaciones recientes');
+      return;
+    }
     const data = await res.json();
     if (data.cotizaciones) setCotizaciones(data.cotizaciones.slice(0, 5));
   }

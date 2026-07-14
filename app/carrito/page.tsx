@@ -7,6 +7,26 @@ import { supabase, Producto, Modulo, Subcategoria } from '@/lib/supabase';
 import { formatCurrency, WHATSAPP_ADMIN, DEPARTAMENTOS_BOLIVIA } from '@/lib/constants';
 import { useCart } from '@/components/cart-context';
 
+// A partir de esta cantidad de productos, el mensaje de WhatsApp se copia al
+// portapapeles en vez de ir embebido en la URL (que tiene un límite práctico
+// de longitud y puede fallar en pedidos grandes). El detalle completo del
+// pedido nunca se resume, solo cambia cómo se entrega el mismo texto.
+const UMBRAL_COTIZACION_EXTENSA = 40;
+
+function abrirOEnviarAVentana(ventana: Window | null, url: string) {
+  if (ventana && !ventana.closed) {
+    ventana.location.href = url;
+    return;
+  }
+  const link = document.createElement('a');
+  link.href = url;
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
 export default function CarritoPage() {
   const router = useRouter();
   const { items, updateQuantity, removeFromCart, clearCart, totalItems } = useCart();
@@ -140,6 +160,11 @@ export default function CarritoPage() {
     e.preventDefault();
     setSubmitting(true);
 
+    // Se abre la pestaña de inmediato (todavía en blanco) para que el navegador
+    // la reconozca como resultado directo del click y no la bloquee más adelante,
+    // sin importar cuánto tarde el proceso de guardado.
+    const whatsappWindow = window.open('', '_blank');
+
     const productosCotizacion = productos.map(p => ({
       producto_id: p.id,
       codigo: p.codigo,
@@ -150,35 +175,38 @@ export default function CarritoPage() {
       subcategoria_id: p.subcategoria_id,
     }));
 
-    for (const prod of productosCotizacion) {
-      const { data: productoActual } = await supabase
-        .from('productos')
-        .select('stock')
-        .eq('id', prod.producto_id)
-        .single();
+    const productoIds = productosCotizacion.map(p => p.producto_id);
 
-      if (!productoActual || productoActual.stock < prod.cantidad) {
-        alert(`Stock insuficiente para ${prod.codigo}. Stock disponible: ${productoActual?.stock || 0}`);
+    // Una sola consulta para el stock de todos los productos, en vez de una
+    // consulta por producto (esto es lo que hacía tan lento un pedido grande).
+    const { data: stocksData } = await supabase
+      .from('productos')
+      .select('id, stock')
+      .in('id', productoIds);
+
+    const stockPorProducto = new Map((stocksData || []).map(p => [p.id, p.stock as number]));
+
+    for (const prod of productosCotizacion) {
+      const stockDisponible = stockPorProducto.get(prod.producto_id) ?? 0;
+      if (stockDisponible < prod.cantidad) {
+        if (whatsappWindow && !whatsappWindow.closed) whatsappWindow.close();
+        alert(`Stock insuficiente para ${prod.codigo}. Stock disponible: ${stockDisponible}`);
         setSubmitting(false);
         return;
       }
     }
 
     try {
-      for (const prod of productosCotizacion) {
-        const { data: productoActual } = await supabase
+      // Los descuentos de stock salen todos en paralelo (antes iban uno por
+      // uno, en fila). Cada producto es una fila distinta, así que no hay
+      // conflicto entre ellos.
+      await Promise.all(productosCotizacion.map(prod => {
+        const stockActual = stockPorProducto.get(prod.producto_id) ?? 0;
+        return supabase
           .from('productos')
-          .select('stock')
-          .eq('id', prod.producto_id)
-          .single();
-
-        if (productoActual) {
-          await supabase
-            .from('productos')
-            .update({ stock: productoActual.stock - prod.cantidad })
-            .eq('id', prod.producto_id);
-        }
-      }
+          .update({ stock: stockActual - prod.cantidad })
+          .eq('id', prod.producto_id);
+      }));
 
       const { error } = await supabase.from('cotizaciones').insert({
         cliente_nombre: formData.nombre,
@@ -192,20 +220,14 @@ export default function CarritoPage() {
 
       if (error) throw error;
     } catch (error) {
-      for (const prod of productosCotizacion) {
-        const { data: productoActual } = await supabase
+      await Promise.all(productosCotizacion.map(prod => {
+        const stockOriginal = stockPorProducto.get(prod.producto_id) ?? 0;
+        return supabase
           .from('productos')
-          .select('stock')
-          .eq('id', prod.producto_id)
-          .single();
-
-        if (productoActual) {
-          await supabase
-            .from('productos')
-            .update({ stock: productoActual.stock + prod.cantidad })
-            .eq('id', prod.producto_id);
-        }
-      }
+          .update({ stock: stockOriginal })
+          .eq('id', prod.producto_id);
+      }));
+      if (whatsappWindow && !whatsappWindow.closed) whatsappWindow.close();
       alert('Error al guardar cotización. Stock revertido.');
       setSubmitting(false);
       return;
@@ -272,17 +294,43 @@ Después de este tiempo, los artículos volverán a estar disponibles.
 ────────────────────`;
 
     const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-    const whatsappUrl = isMobile 
-      ? `https://api.whatsapp.com/send?phone=${WHATSAPP_ADMIN}&text=${encodeURIComponent(mensajeTexto)}`
-      : `https://wa.me/${WHATSAPP_ADMIN}?text=${encodeURIComponent(mensajeTexto)}`;
-    
-    const link = document.createElement('a');
-    link.href = whatsappUrl;
-    link.target = '_blank';
-    link.rel = 'noopener noreferrer';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    const esCotizacionExtensa = productosCotizacion.length > UMBRAL_COTIZACION_EXTENSA;
+
+    if (esCotizacionExtensa) {
+      let copiadoAlPortapapeles = false;
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(mensajeTexto);
+          copiadoAlPortapapeles = true;
+        }
+      } catch {
+        copiadoAlPortapapeles = false;
+      }
+
+      if (copiadoAlPortapapeles) {
+        // Con muchos productos el texto es muy largo para ir en la URL
+        // (WhatsApp puede fallar en abrir o llegar con el texto cortado).
+        // Se copia completo al portapapeles y se abre el chat vacío.
+        alert('Tu cotización se copió. Pégala (mantén presionado y "Pegar") en el chat de WhatsApp que se va a abrir.');
+        const chatUrl = isMobile
+          ? `https://api.whatsapp.com/send?phone=${WHATSAPP_ADMIN}`
+          : `https://wa.me/${WHATSAPP_ADMIN}`;
+        abrirOEnviarAVentana(whatsappWindow, chatUrl);
+      } else {
+        // Si el portapapeles no está disponible, se mantiene el
+        // comportamiento de siempre (texto en la URL) como respaldo.
+        const whatsappUrl = isMobile
+          ? `https://api.whatsapp.com/send?phone=${WHATSAPP_ADMIN}&text=${encodeURIComponent(mensajeTexto)}`
+          : `https://wa.me/${WHATSAPP_ADMIN}?text=${encodeURIComponent(mensajeTexto)}`;
+        abrirOEnviarAVentana(whatsappWindow, whatsappUrl);
+      }
+    } else {
+      const whatsappUrl = isMobile
+        ? `https://api.whatsapp.com/send?phone=${WHATSAPP_ADMIN}&text=${encodeURIComponent(mensajeTexto)}`
+        : `https://wa.me/${WHATSAPP_ADMIN}?text=${encodeURIComponent(mensajeTexto)}`;
+      abrirOEnviarAVentana(whatsappWindow, whatsappUrl);
+    }
+
     clearCart();
     setSubmitted(true);
   };

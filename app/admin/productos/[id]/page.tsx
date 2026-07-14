@@ -44,6 +44,9 @@ export default function EditarProductoPage() {
       fetch('/api/admin/modulos?tipo=subcategorias'),
       fetch(`/api/admin/productos?id=${productId}`),
     ]);
+    if (!modulosRes.ok || !subcategoriasRes.ok) {
+      console.error('Error al cargar módulos y subcategorías');
+    }
     const modulosData = await modulosRes.json();
     const subcategoriasData = await subcategoriasRes.json();
     const productoData = await productoRes.json();
@@ -157,11 +160,17 @@ export default function EditarProductoPage() {
     };
 
     try {
-      await fetch('/api/admin/productos', {
+      const res = await fetch('/api/admin/productos', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: productId, ...productoData }),
       });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || 'Error al guardar producto');
+        setGuardando(false);
+        return;
+      }
       volverAPProductos();
     } catch (err) {
       alert('Error al guardar producto');

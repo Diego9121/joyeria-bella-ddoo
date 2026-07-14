@@ -26,6 +26,9 @@ export default function ModulosAdmin() {
       fetch('/api/admin/modulos?tipo=modulos'),
       fetch('/api/admin/modulos?tipo=subcategorias'),
     ]);
+    if (!modulosRes.ok || !subcategoriasRes.ok) {
+      console.error('Error al cargar módulos y subcategorías');
+    }
     const modulosData = await modulosRes.json();
     const subcategoriasData = await subcategoriasRes.json();
     if (modulosData.data) setModulos(modulosData.data);
@@ -39,13 +42,21 @@ export default function ModulosAdmin() {
 
   const deleteModulo = async (id: string) => {
     if (!confirm('¿Eliminar este módulo? Las subcategorías asociadas también se eliminarán.')) return;
-    await fetch(`/api/admin/modulos?id=${id}&tipo=modulo`, { method: 'DELETE' });
+    const res = await fetch(`/api/admin/modulos?id=${id}&tipo=modulo`, { method: 'DELETE' });
+    if (!res.ok) {
+      alert('No se pudo eliminar el módulo. Intenta de nuevo.');
+      return;
+    }
     loadData();
   };
 
   const deleteSubcategoria = async (id: string) => {
     if (!confirm('¿Eliminar esta subcategoría?')) return;
-    await fetch(`/api/admin/modulos?id=${id}&tipo=subcategoria`, { method: 'DELETE' });
+    const res = await fetch(`/api/admin/modulos?id=${id}&tipo=subcategoria`, { method: 'DELETE' });
+    if (!res.ok) {
+      alert('No se pudo eliminar la subcategoría. Intenta de nuevo.');
+      return;
+    }
     loadData();
   };
 
@@ -269,19 +280,25 @@ function ModuloModal({ modulo, onClose, onSave }: { modulo: Modulo | null; onClo
     };
 
     try {
-      if (modulo) {
-        await fetch('/api/admin/modulos', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tipo: 'modulo', id: modulo.id, ...data }),
-        });
-      } else {
-        await fetch('/api/admin/modulos', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tipo: 'modulo', ...data }),
-        });
+      const res = modulo
+        ? await fetch('/api/admin/modulos', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tipo: 'modulo', id: modulo.id, ...data }),
+          })
+        : await fetch('/api/admin/modulos', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tipo: 'modulo', ...data }),
+          });
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        alert(errorData.error || 'Error al guardar módulo');
+        setGuardando(false);
+        return;
       }
+
       onSave();
       onClose();
     } catch (err) {
@@ -444,13 +461,20 @@ function SubcategoriaModal({ subcategoria, modulos, selectedModuloId, subcategor
       
       if (subcategoria) {
         const oldPrefijo = subcategoria.prefijo_codigo || '';
-        
-        await fetch('/api/admin/modulos', {
+
+        const res = await fetch('/api/admin/modulos', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ tipo: 'subcategoria', id: subcategoria.id, nombre: form.nombre, prefijo_codigo: prefijoUpper }),
         });
-        
+
+        if (!res.ok) {
+          const errorData = await res.json().catch(() => ({}));
+          alert(errorData.error || 'Error al guardar subcategoría');
+          setGuardando(false);
+          return;
+        }
+
         if (oldPrefijo !== prefijoUpper && selectedModulo) {
           await updateProductCodesBySubcategoria(
             subcategoria.id,
@@ -460,11 +484,18 @@ function SubcategoriaModal({ subcategoria, modulos, selectedModuloId, subcategor
           );
         }
       } else {
-        await fetch('/api/admin/modulos', {
+        const res = await fetch('/api/admin/modulos', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ tipo: 'subcategoria', nombre: form.nombre, modulo_id: form.modulo_id, prefijo_codigo: prefijoUpper }),
         });
+
+        if (!res.ok) {
+          const errorData = await res.json().catch(() => ({}));
+          alert(errorData.error || 'Error al guardar subcategoría');
+          setGuardando(false);
+          return;
+        }
       }
       onSave();
       onClose();
