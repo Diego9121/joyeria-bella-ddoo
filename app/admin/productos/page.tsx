@@ -308,20 +308,6 @@ function ProductosAdminContent() {
             
             <div className="flex items-center gap-1 flex-wrap justify-center">
               {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => {
-                const showPage =
-                  page === 1 ||
-                  page === totalPages ||
-                  (page >= currentPage - 1 && page <= currentPage + 1);
-
-                const showLeftDots = page === 2 && currentPage > 4;
-                const showRightDots = page === totalPages - 1 && currentPage < totalPages - 3;
-
-                if (!showPage && !showLeftDots && !showRightDots) return null;
-
-                if (showLeftDots || showRightDots) {
-                  return <span key={`dots-${page}`} className="px-2 text-gray-400">...</span>;
-                }
-
                 return (
                   <button
                     key={page}
