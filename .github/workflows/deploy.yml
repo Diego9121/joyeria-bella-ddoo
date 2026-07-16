@@ -29,3 +29,12 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: 007266ebf653b5577ba2a3191a8fdaac
+          # Estas variables NEXT_PUBLIC_* no son secretas (terminan siempre
+          # visibles en el bundle del cliente por diseno de Next.js) y ya
+          # estan en texto plano en wrangler.jsonc. Next.js las necesita
+          # presentes durante "next build" (no solo en el Worker en runtime)
+          # para no compilar con el valor de repuesto de lib/supabase.ts.
+          NEXT_PUBLIC_SUPABASE_URL: https://gruevwazraatlbxmtwgs.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdydWV2d2F6cmFhdGxieG10d2dzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgzODQ0OTksImV4cCI6MjA5Mzk2MDQ5OX0.-d6WsG6J2RXu4fJ4K2ibuUq7Y70PztnAsCRCgUexUdM
+          NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME: dmkxj8sls
+          NEXT_PUBLIC_WHATSAPP_ADMIN: "59174913218"
