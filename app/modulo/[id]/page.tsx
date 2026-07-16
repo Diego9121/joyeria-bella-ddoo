@@ -4,7 +4,8 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import { useParams, useSearchParams } from 'next/navigation';
-import { supabase, Modulo, Subcategoria } from '@/lib/supabase';
+import { Modulo, Subcategoria } from '@/lib/supabase';
+import { getModulosCacheados, getSubcategoriasCacheadas } from '@/lib/catalogCache';
 import { TikTokBanner } from '@/components/tiktok-banner';
 import { WhatsAppButton } from '@/components/whatsapp-button';
 import { ProductGrid } from '@/components/ProductGrid';
@@ -24,36 +25,26 @@ export default function SubcategoriaPage() {
   
   const [modulo, setModulo] = useState<Modulo | null>(null);
   const [subcategorias, setSubcategorias] = useState<Subcategoria[]>([]);
-  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    setModulo(null);
+    setSubcategorias([]);
     loadData();
   }, [moduloId]);
 
   async function loadData() {
-    const [moduloRes, subcategoriasRes] = await Promise.all([
-      supabase.from('modulos').select('*').eq('id', moduloId).single(),
-      supabase.from('subcategorias').select('*').eq('modulo_id', moduloId).order('nombre'),
+    // Módulo y subcategorías salen en paralelo, y ProductGrid (más abajo)
+    // ya no espera a que esto termine para empezar a pedir los productos:
+    // antes estaban encadenados uno detrás del otro.
+    const [modulos, subcats] = await Promise.all([
+      getModulosCacheados(),
+      getSubcategoriasCacheadas(moduloId),
     ]);
-
-    if (moduloRes.data) setModulo(moduloRes.data);
-    if (subcategoriasRes.data) setSubcategorias(subcategoriasRes.data);
-    setLoading(false);
+    setModulo(modulos.find(m => m.id === moduloId) || null);
+    setSubcategorias(subcats);
   }
 
   const selectedSubcategoria = subcategorias.find(s => s.id === subcategoriaId);
-
-  if (loading) {
-    return (
-      <div className="min-h-screen flex flex-col bg-white">
-        <TikTokBanner />
-        <div className="flex-1 flex items-center justify-center">
-          <div className="text-charcoal text-xl">Cargando...</div>
-        </div>
-        <WhatsAppButtonLazy />
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen flex flex-col bg-gray-50">

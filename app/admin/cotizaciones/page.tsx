@@ -3,22 +3,21 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { supabase, Cotizacion, CotizacionProducto, Modulo, Subcategoria } from '@/lib/supabase';
-import { formatCurrency, WHATSAPP_ADMIN } from '@/lib/constants';
+import { formatCurrency } from '@/lib/constants';
 import { AdminProtected } from '@/components/admin-protected';
+import {
+  UMBRAL_COTIZACION_EXTENSA,
+  agruparPorModulo,
+  construirMensajeCotizacion,
+  construirUrlWhatsApp,
+  abrirOEnviarAVentana,
+} from '@/lib/cotizacionMensaje';
 
 interface ProductoStock {
   id: string;
   codigo: string;
   nombre: string;
   stock: number;
-}
-
-interface GrupoProductosCotizacion {
-  key: string;
-  moduloNombre: string;
-  subcategoriaNombre: string | null;
-  productos: CotizacionProducto[];
-  subtotal: number;
 }
 
 export default function CotizacionesAdmin() {
@@ -57,37 +56,6 @@ export default function CotizacionesAdmin() {
     if (subcategoriasData.data) setSubcategorias(subcategoriasData.data);
     setLoading(false);
   }
-
-  // Agrupa los productos de una cotización por módulo y subcategoría,
-  // en el mismo orden en que aparece cada grupo por primera vez
-  // (igual criterio que usa el mensaje de WhatsApp en el carrito).
-  const agruparPorModulo = (productos: CotizacionProducto[]): GrupoProductosCotizacion[] => {
-    const grupos = new Map<string, GrupoProductosCotizacion>();
-
-    for (const prod of productos) {
-      const moduloId = prod.modulo_id || '';
-      const subcategoriaId = prod.subcategoria_id || '';
-      const key = `${moduloId}|${subcategoriaId}`;
-
-      if (!grupos.has(key)) {
-        const modulo = modulos.find(m => m.id === moduloId);
-        const subcategoria = subcategoriaId ? subcategorias.find(s => s.id === subcategoriaId) : null;
-        grupos.set(key, {
-          key,
-          moduloNombre: modulo?.nombre || 'Sin módulo',
-          subcategoriaNombre: subcategoria?.nombre || null,
-          productos: [],
-          subtotal: 0,
-        });
-      }
-
-      const grupo = grupos.get(key)!;
-      grupo.productos.push(prod);
-      grupo.subtotal += prod.precio * prod.cantidad;
-    }
-
-    return Array.from(grupos.values());
-  };
 
   const filteredCotizaciones = cotizaciones.filter(c => {
     const matchesEstado = !filterEstado || c.estado === filterEstado;
@@ -160,14 +128,34 @@ export default function CotizacionesAdmin() {
     });
   };
 
-  const contactByWhatsApp = (celular: string) => {
-    const link = document.createElement('a');
-    link.href = `https://wa.me/${celular.replace(/\s/g, '')}`;
-    link.target = '_blank';
-    link.rel = 'noopener noreferrer';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+  const enviarCotizacionPorWhatsApp = async (cotizacion: Cotizacion) => {
+    // Se abre la pestaña de inmediato para que el navegador la reconozca
+    // como resultado directo del click y no la bloquee más adelante.
+    const ventana = window.open('', '_blank');
+
+    const mensaje = construirMensajeCotizacion(cotizacion, cotizacion.productos, modulos, subcategorias);
+    const esCotizacionExtensa = cotizacion.productos.length > UMBRAL_COTIZACION_EXTENSA;
+
+    if (esCotizacionExtensa) {
+      let copiadoAlPortapapeles = false;
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(mensaje);
+          copiadoAlPortapapeles = true;
+        }
+      } catch {
+        copiadoAlPortapapeles = false;
+      }
+
+      if (copiadoAlPortapapeles) {
+        alert('Tu cotización se copió. Pégala (mantén presionado y "Pegar") en el chat de WhatsApp que se va a abrir.');
+        abrirOEnviarAVentana(ventana, construirUrlWhatsApp(cotizacion.cliente_celular));
+      } else {
+        abrirOEnviarAVentana(ventana, construirUrlWhatsApp(cotizacion.cliente_celular, mensaje));
+      }
+    } else {
+      abrirOEnviarAVentana(ventana, construirUrlWhatsApp(cotizacion.cliente_celular, mensaje));
+    }
   };
 
   if (loading) {
@@ -240,7 +228,7 @@ export default function CotizacionesAdmin() {
                 <div className="p-4">
                   <h4 className="font-semibold text-charcoal mb-3">Productos:</h4>
                   <div className="space-y-4">
-                    {agruparPorModulo(productos).map(grupo => {
+                    {agruparPorModulo(productos, modulos, subcategorias).map(grupo => {
                       const encabezado = grupo.subcategoriaNombre
                         ? `${grupo.moduloNombre} (${grupo.subcategoriaNombre})`
                         : grupo.moduloNombre;
@@ -295,10 +283,10 @@ export default function CotizacionesAdmin() {
                 <div className="bg-gray-50 p-3 sm:p-4">
                   <div className="grid grid-cols-2 sm:flex sm:flex-wrap sm:gap-2 sm:justify-end">
                     <button
-                      onClick={() => contactByWhatsApp(cotizacion.cliente_celular)}
+                      onClick={() => enviarCotizacionPorWhatsApp(cotizacion)}
                       className="bg-green-500 text-white px-2 py-2 rounded-lg hover:bg-green-600 transition text-xs sm:text-sm sm:px-4 sm:py-2 text-center"
                     >
-                      Contactar
+                      Enviar Cotización
                     </button>
 
                     {cotizacion.estado === 'PENDIENTE' && (

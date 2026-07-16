@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { supabase, Modulo } from '@/lib/supabase';
+import { Modulo } from '@/lib/supabase';
+import { getModulosCacheados } from '@/lib/catalogCache';
 import { Header } from '@/components/header';
 import { TikTokBanner } from '@/components/tiktok-banner';
 import { WhatsAppButton } from '@/components/whatsapp-button';
@@ -25,12 +26,8 @@ export default function Home() {
   }, []);
 
   async function loadData() {
-    const { data } = await supabase
-      .from('modulos')
-      .select('*')
-      .order('nombre');
-    
-    if (data) setModulos(data);
+    const data = await getModulosCacheados();
+    setModulos(data);
     setLoading(false);
   }
 

@@ -6,26 +6,14 @@ import { useRouter } from 'next/navigation';
 import { supabase, Producto, Modulo, Subcategoria } from '@/lib/supabase';
 import { formatCurrency, WHATSAPP_ADMIN, DEPARTAMENTOS_BOLIVIA } from '@/lib/constants';
 import { useCart } from '@/components/cart-context';
-
-// A partir de esta cantidad de productos, el mensaje de WhatsApp se copia al
-// portapapeles en vez de ir embebido en la URL (que tiene un límite práctico
-// de longitud y puede fallar en pedidos grandes). El detalle completo del
-// pedido nunca se resume, solo cambia cómo se entrega el mismo texto.
-const UMBRAL_COTIZACION_EXTENSA = 40;
-
-function abrirOEnviarAVentana(ventana: Window | null, url: string) {
-  if (ventana && !ventana.closed) {
-    ventana.location.href = url;
-    return;
-  }
-  const link = document.createElement('a');
-  link.href = url;
-  link.target = '_blank';
-  link.rel = 'noopener noreferrer';
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-}
+import {
+  UMBRAL_COTIZACION_EXTENSA,
+  construirMensajeCotizacion,
+  construirUrlWhatsApp,
+  abrirOEnviarAVentana,
+  roundToTwoDecimals,
+  roundTotalGeneral,
+} from '@/lib/cotizacionMensaje';
 
 export default function CarritoPage() {
   const router = useRouter();
@@ -119,36 +107,7 @@ export default function CarritoPage() {
     }
   };
 
-  function roundToTwoDecimals(value: number): number {
-      return Math.round(value * 100) / 100;
-    }
-
-    function roundTotalGeneral(total: number): number {
-      const cents = Math.round((total * 100) % 100);
-      const validCents = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90];
-      
-      let rounded: number;
-      
-      if (validCents.includes(cents)) {
-        rounded = total;
-      } else {
-        rounded = Math.ceil(total * 10) / 10;
-      }
-      
-      return roundToTwoDecimals(rounded);
-    }
-
-    const getSubtotal = () => {
-      const total = productos.reduce((sum, p) => {
-        const cantidad = items.find(i => i.productoId === p.id)?.cantidad || 0;
-        const precio = p.precio_descuento || p.precio;
-        const subtotal = roundToTwoDecimals(precio * cantidad);
-        return sum + subtotal;
-      }, 0);
-      return roundToTwoDecimals(total);
-    };
-
-    const getTotalOriginal = () => {
+  const getTotalOriginal = () => {
       return productos.reduce((sum, p) => {
         const cantidad = items.find(i => i.productoId === p.id)?.cantidad || 0;
         const precio = p.precio_descuento || p.precio;
@@ -233,67 +192,18 @@ export default function CarritoPage() {
       return;
     }
 
-    const total = getSubtotal();
-    const totalOriginal = getTotalOriginal();
-    
-    const groupedByModulo = productos.reduce((acc, p) => {
-      const moduloKey = p.modulo_id;
-      if (!acc[moduloKey]) {
-        acc[moduloKey] = {
-          nombre: p.modulo_nombre || 'Sin módulo',
-          productos: [],
-          subtotal: 0,
-        };
-      }
-      const cantidad = items.find(i => i.productoId === p.id)?.cantidad || 0;
-      const precio = p.precio_descuento || p.precio;
-      const subtotalProducto = roundToTwoDecimals(precio * cantidad);
-      acc[moduloKey].productos.push({
-        codigo: p.codigo,
-        cantidad,
-        subtotal: subtotalProducto,
-        subcategoria: p.subcategoria_nombre || 'Sin subcategoría',
-      });
-      acc[moduloKey].subtotal += subtotalProducto;
-      return acc;
-    }, {} as Record<string, { nombre: string; productos: { codigo: string; cantidad: number; subtotal: number; subcategoria: string }[]; subtotal: number }>);
+    const mensajeTexto = construirMensajeCotizacion(
+      {
+        cliente_nombre: formData.nombre,
+        cliente_celular: formData.celular,
+        cliente_departamento: formData.departamento,
+        cliente_provincia: formData.provincia,
+      },
+      productosCotizacion,
+      modulos,
+      subcategorias
+    );
 
-    const totalRounded = roundTotalGeneral(totalOriginal);
-
-const formatPrecio = (precio: number) => `${precio.toFixed(2)} Bs`;
-
-    let mensajeTexto = `────────────────────
-JOYERÍA BELLA - COTIZACIÓN
-────────────────────
-DATOS DEL CLIENTE
-────────────────────
-Nombre:    ${formData.nombre}
-Celular:   ${formData.celular}
-Ubicación: ${formData.departamento} - ${formData.provincia}
-Notas:     
-────────────────────
-PRODUCTOS
-────────────────────`;
-
-    Object.values(groupedByModulo).forEach((modulo) => {
-      const subcatText = modulo.productos.length > 0 && modulo.productos[0].subcategoria !== 'Sin subcategoría' 
-        ? ` (${modulo.productos[0].subcategoria})` 
-        : '';
-      mensajeTexto += `\n📿 ${modulo.nombre.toUpperCase()}${subcatText}`;
-      modulo.productos.forEach(p => {
-        mensajeTexto += `\n     ${p.codigo}    x${p.cantidad}    ${formatPrecio(p.subtotal)}`;
-      });
-      mensajeTexto += `\n     ▸ Subtotal: ${formatPrecio(modulo.subtotal)}`;
-    });
-
-    mensajeTexto += `\n────────────────────
-        💰 TOTAL: ${formatPrecio(totalRounded)}
-────────────────────
-⏰ IMPORTANTE: Esta cotización tiene validez de 15 Minutos.
-Después de este tiempo, los artículos volverán a estar disponibles.
-────────────────────`;
-
-    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
     const esCotizacionExtensa = productosCotizacion.length > UMBRAL_COTIZACION_EXTENSA;
 
     if (esCotizacionExtensa) {
@@ -312,23 +222,14 @@ Después de este tiempo, los artículos volverán a estar disponibles.
         // (WhatsApp puede fallar en abrir o llegar con el texto cortado).
         // Se copia completo al portapapeles y se abre el chat vacío.
         alert('Tu cotización se copió. Pégala (mantén presionado y "Pegar") en el chat de WhatsApp que se va a abrir.');
-        const chatUrl = isMobile
-          ? `https://api.whatsapp.com/send?phone=${WHATSAPP_ADMIN}`
-          : `https://wa.me/${WHATSAPP_ADMIN}`;
-        abrirOEnviarAVentana(whatsappWindow, chatUrl);
+        abrirOEnviarAVentana(whatsappWindow, construirUrlWhatsApp(WHATSAPP_ADMIN));
       } else {
         // Si el portapapeles no está disponible, se mantiene el
         // comportamiento de siempre (texto en la URL) como respaldo.
-        const whatsappUrl = isMobile
-          ? `https://api.whatsapp.com/send?phone=${WHATSAPP_ADMIN}&text=${encodeURIComponent(mensajeTexto)}`
-          : `https://wa.me/${WHATSAPP_ADMIN}?text=${encodeURIComponent(mensajeTexto)}`;
-        abrirOEnviarAVentana(whatsappWindow, whatsappUrl);
+        abrirOEnviarAVentana(whatsappWindow, construirUrlWhatsApp(WHATSAPP_ADMIN, mensajeTexto));
       }
     } else {
-      const whatsappUrl = isMobile
-        ? `https://api.whatsapp.com/send?phone=${WHATSAPP_ADMIN}&text=${encodeURIComponent(mensajeTexto)}`
-        : `https://wa.me/${WHATSAPP_ADMIN}?text=${encodeURIComponent(mensajeTexto)}`;
-      abrirOEnviarAVentana(whatsappWindow, whatsappUrl);
+      abrirOEnviarAVentana(whatsappWindow, construirUrlWhatsApp(WHATSAPP_ADMIN, mensajeTexto));
     }
 
     clearCart();
