@@ -13,6 +13,15 @@ import { Modulo, Subcategoria, CotizacionProducto } from './supabase';
 // detalle completo del pedido nunca se resume, solo cambia cómo se entrega.
 export const UMBRAL_COTIZACION_EXTENSA = 40;
 
+// Celulares bolivianos: 8 dígitos exactos, empiezan con 5, 6 o 7
+// (incluye los rangos nuevos que arrancan con 5).
+const PATRON_CELULAR_BOLIVIANO = /^[567]\d{7}$/;
+
+export function esCelularBoliviano(numero: string): boolean {
+  const numeroLimpio = numero.replace(/\s/g, '');
+  return PATRON_CELULAR_BOLIVIANO.test(numeroLimpio);
+}
+
 export interface GrupoProductosCotizacion {
   key: string;
   moduloNombre: string;
