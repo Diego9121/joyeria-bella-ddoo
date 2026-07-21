@@ -16,16 +16,38 @@ function ProductosAdminContent() {
   const [modulos, setModulos] = useState<Modulo[]>([]);
   const [subcategorias, setSubcategorias] = useState<Subcategoria[]>([]);
   const [loading, setLoading] = useState(true);
+  const [initialLoad, setInitialLoad] = useState(true);
   const [filterAgotados, setFilterAgotados] = useState(false);
   const [showNuevoModuloModal, setShowNuevoModuloModal] = useState(false);
   const [showNuevaSubcategoriaModal, setShowNuevaSubcategoriaModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalProducts, setTotalProducts] = useState(0);
-  
+
   const filterModulo = searchParams.get('modulo') || '';
   const filterSubcategoria = searchParams.get('subcategoria') || '';
+  const filterBusqueda = searchParams.get('busqueda') || '';
+  const [busquedaCodigo, setBusquedaCodigo] = useState(filterBusqueda);
   const productsPerPage = 30;
+
+  // Si la URL cambia por fuera (ej. al volver de editar un producto),
+  // refleja ese valor en el campo de texto.
+  useEffect(() => {
+    setBusquedaCodigo(filterBusqueda);
+  }, [filterBusqueda]);
+
+  // Espera a que el admin deje de escribir antes de reflejar la búsqueda
+  // en la URL, para no disparar una consulta por cada letra tecleada.
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      const texto = busquedaCodigo.trim();
+      if (texto !== filterBusqueda) {
+        actualizarFiltrosURL(filterModulo, filterSubcategoria, texto);
+      }
+    }, 350);
+    return () => clearTimeout(timeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busquedaCodigo]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -38,15 +60,15 @@ function ProductosAdminContent() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [filterAgotados, filterModulo, filterSubcategoria]);
+  }, [filterAgotados, filterModulo, filterSubcategoria, filterBusqueda]);
 
   useEffect(() => {
     loadTotalCount();
-  }, [filterModulo, filterSubcategoria, filterAgotados]);
+  }, [filterModulo, filterSubcategoria, filterAgotados, filterBusqueda]);
 
   useEffect(() => {
     loadProductsPage(currentPage);
-  }, [currentPage, filterAgotados, filterModulo, filterSubcategoria]);
+  }, [currentPage, filterAgotados, filterModulo, filterSubcategoria, filterBusqueda]);
 
   async function loadTotalCount() {
     const params = new URLSearchParams();
@@ -54,7 +76,8 @@ function ProductosAdminContent() {
     if (filterAgotados) params.set('agotados', 'true');
     if (filterModulo) params.set('modulo', filterModulo);
     if (filterSubcategoria) params.set('subcategoria', filterSubcategoria);
-    
+    if (filterBusqueda) params.set('busqueda', filterBusqueda);
+
     const res = await fetch(`/api/admin/productos?${params}`);
     if (!res.ok) {
       console.error('Error al cargar el total de productos');
@@ -72,16 +95,19 @@ function ProductosAdminContent() {
     if (filterAgotados) params.set('agotados', 'true');
     if (filterModulo) params.set('modulo', filterModulo);
     if (filterSubcategoria) params.set('subcategoria', filterSubcategoria);
-    
+    if (filterBusqueda) params.set('busqueda', filterBusqueda);
+
     const res = await fetch(`/api/admin/productos?${params}`);
     if (!res.ok) {
       console.error('Error al cargar productos');
       setLoading(false);
+      setInitialLoad(false);
       return;
     }
     const data = await res.json();
     if (data.productos) setProductos(data.productos);
     setLoading(false);
+    setInitialLoad(false);
   }
 
   async function loadModulosYSubcategorias() {
@@ -134,19 +160,20 @@ function ProductosAdminContent() {
     loadProductsPage(currentPage);
   };
 
-  const updateFilters = useCallback((modulo: string, subcategoria: string) => {
+  const actualizarFiltrosURL = useCallback((modulo: string, subcategoria: string, busqueda: string) => {
     const params = new URLSearchParams();
     if (modulo) params.set('modulo', modulo);
     if (subcategoria) params.set('subcategoria', subcategoria);
+    if (busqueda) params.set('busqueda', busqueda);
     router.replace(`/admin/productos?${params.toString()}`);
   }, [router]);
 
   const handleModuloChange = (value: string) => {
-    updateFilters(value, '');
+    actualizarFiltrosURL(value, '', filterBusqueda);
   };
 
   const handleSubcategoriaChange = (value: string) => {
-    updateFilters(filterModulo, value);
+    actualizarFiltrosURL(filterModulo, value, filterBusqueda);
   };
 
   const handleModuloCreado = (nuevoModulo: Modulo) => {
@@ -159,7 +186,7 @@ function ProductosAdminContent() {
     setShowNuevaSubcategoriaModal(false);
   };
 
-  if (loading) {
+  if (initialLoad && loading) {
     return <div className="min-h-screen bg-cream flex items-center justify-center text-xl text-gold">Cargando...</div>;
   }
 
@@ -183,6 +210,13 @@ function ProductosAdminContent() {
       <main className="max-w-7xl mx-auto px-4 py-8">
         <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-3 mb-4">
           <div className="flex flex-col sm:flex-row gap-2 flex-1">
+            <input
+              type="text"
+              placeholder="Buscar por código..."
+              value={busquedaCodigo}
+              onChange={(e) => setBusquedaCodigo(e.target.value)}
+              className="w-full sm:w-auto px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gold focus:border-gold bg-white"
+            />
             <select
               value={filterModulo}
               onChange={(e) => handleModuloChange(e.target.value)}
@@ -232,7 +266,7 @@ function ProductosAdminContent() {
           </button>
         </div>
 
-        <div className="bg-white rounded-xl shadow-md overflow-x-auto">
+        <div className={`bg-white rounded-xl shadow-md overflow-x-auto transition-opacity ${loading ? 'opacity-50' : ''}`}>
           <table className="w-full min-w-[600px]">
             <thead className="bg-gold text-white">
               <tr>
@@ -284,7 +318,7 @@ function ProductosAdminContent() {
                     )}
                   </td>
                   <td className="px-4 py-3 text-center">
-                    <Link href={`/admin/productos/${product.id}?modulo=${filterModulo}&subcategoria=${filterSubcategoria}`} className="text-blue-500 hover:text-blue-700 mr-2">Editar</Link>
+                    <Link href={`/admin/productos/${product.id}?modulo=${filterModulo}&subcategoria=${filterSubcategoria}&busqueda=${encodeURIComponent(filterBusqueda)}`} className="text-blue-500 hover:text-blue-700 mr-2">Editar</Link>
                     <button onClick={() => toggleActivo(product)} className="text-yellow-500 hover:text-yellow-700 mr-2">
                       {product.activo ? 'Desactivar' : 'Activar'}
                     </button>

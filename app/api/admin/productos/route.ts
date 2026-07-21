@@ -69,6 +69,7 @@ export async function GET(request: Request) {
     const filterAgotados = searchParams.get('agotados') === 'true';
     const filterModulo = searchParams.get('modulo') || '';
     const filterSubcategoria = searchParams.get('subcategoria') || '';
+    const busqueda = searchParams.get('busqueda') || '';
 
     // Búsqueda por ID específico
     if (id) {
@@ -103,6 +104,9 @@ export async function GET(request: Request) {
     }
     if (filterSubcategoria) {
       query = query.eq('subcategoria_id', filterSubcategoria);
+    }
+    if (busqueda) {
+      query = query.ilike('codigo', `%${busqueda}%`);
     }
 
     const { data, error, count } = await query;

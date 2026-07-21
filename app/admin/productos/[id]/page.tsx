@@ -131,8 +131,10 @@ export default function EditarProductoPage() {
     const params = new URLSearchParams();
     const modulo = searchParams.get('modulo');
     const subcategoria = searchParams.get('subcategoria');
+    const busqueda = searchParams.get('busqueda');
     if (modulo) params.set('modulo', modulo);
     if (subcategoria) params.set('subcategoria', subcategoria);
+    if (busqueda) params.set('busqueda', busqueda);
     router.push(`/admin/productos?${params.toString()}`);
   };
 
