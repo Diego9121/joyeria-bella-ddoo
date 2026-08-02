@@ -51,6 +51,7 @@ export default function CarritoPage() {
   const [showForm, setShowForm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [whatsappUrl, setWhatsappUrl] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     nombre: '',
     celular: '',
@@ -150,116 +151,134 @@ export default function CarritoPage() {
     // sin importar cuánto tarde el proceso de guardado.
     const whatsappWindow = window.open('', '_blank');
 
-    const productosCotizacion = productos.map(p => ({
-      producto_id: p.id,
-      codigo: p.codigo,
-      nombre: p.nombre,
-      precio: p.precio_descuento || p.precio,
-      cantidad: items.find(i => i.productoId === p.id)?.cantidad || 0,
-      modulo_id: p.modulo_id,
-      subcategoria_id: p.subcategoria_id,
-    }));
+    // Todo el flujo va dentro de un try/catch/finally: antes, un fallo en la
+    // consulta de stock o en el armado del mensaje (fuera de cualquier bloque
+    // de manejo de errores) dejaba al cliente con una pantalla que no hacía
+    // nada, sin guardar la cotización ni avisar del error.
+    try {
+      const productosCotizacion = productos.map(p => ({
+        producto_id: p.id,
+        codigo: p.codigo,
+        nombre: p.nombre,
+        precio: p.precio_descuento || p.precio,
+        cantidad: items.find(i => i.productoId === p.id)?.cantidad || 0,
+        modulo_id: p.modulo_id,
+        subcategoria_id: p.subcategoria_id,
+      }));
 
-    const productoIds = productosCotizacion.map(p => p.producto_id);
+      const productoIds = productosCotizacion.map(p => p.producto_id);
 
-    // Una sola consulta para el stock de todos los productos, en vez de una
-    // consulta por producto (esto es lo que hacía tan lento un pedido grande).
-    const { data: stocksData } = await supabase
-      .from('productos')
-      .select('id, stock')
-      .in('id', productoIds);
+      // Una sola consulta para el stock de todos los productos, en vez de una
+      // consulta por producto (esto es lo que hacía tan lento un pedido grande).
+      const { data: stocksData, error: stockCheckError } = await supabase
+        .from('productos')
+        .select('id, stock')
+        .in('id', productoIds);
 
-    const stockPorProducto = new Map((stocksData || []).map(p => [p.id, p.stock as number]));
+      if (stockCheckError) throw stockCheckError;
 
-    for (const prod of productosCotizacion) {
-      const stockDisponible = stockPorProducto.get(prod.producto_id) ?? 0;
-      if (stockDisponible < prod.cantidad) {
+      const stockPorProducto = new Map((stocksData || []).map(p => [p.id, p.stock as number]));
+
+      for (const prod of productosCotizacion) {
+        const stockDisponible = stockPorProducto.get(prod.producto_id) ?? 0;
+        if (stockDisponible < prod.cantidad) {
+          if (whatsappWindow && !whatsappWindow.closed) whatsappWindow.close();
+          alert(`Stock insuficiente para ${prod.codigo}. Stock disponible: ${stockDisponible}`);
+          return;
+        }
+      }
+
+      try {
+        // Los descuentos de stock salen todos en paralelo (antes iban uno por
+        // uno, en fila). Cada producto es una fila distinta, así que no hay
+        // conflicto entre ellos.
+        await Promise.all(productosCotizacion.map(prod => {
+          const stockActual = stockPorProducto.get(prod.producto_id) ?? 0;
+          return supabase
+            .from('productos')
+            .update({ stock: stockActual - prod.cantidad })
+            .eq('id', prod.producto_id);
+        }));
+
+        const { error } = await supabase.from('cotizaciones').insert({
+          cliente_nombre: formData.nombre,
+          cliente_celular: formData.celular,
+          cliente_departamento: formData.departamento,
+          cliente_provincia: formData.provincia,
+          cliente_notas: formData.notas,
+          productos: productosCotizacion,
+          estado: 'PENDIENTE',
+        });
+
+        if (error) throw error;
+      } catch (error) {
+        await Promise.all(productosCotizacion.map(prod => {
+          const stockOriginal = stockPorProducto.get(prod.producto_id) ?? 0;
+          return supabase
+            .from('productos')
+            .update({ stock: stockOriginal })
+            .eq('id', prod.producto_id);
+        }));
         if (whatsappWindow && !whatsappWindow.closed) whatsappWindow.close();
-        alert(`Stock insuficiente para ${prod.codigo}. Stock disponible: ${stockDisponible}`);
-        setSubmitting(false);
+        alert('Error al guardar cotización. Stock revertido.');
         return;
       }
-    }
 
-    try {
-      // Los descuentos de stock salen todos en paralelo (antes iban uno por
-      // uno, en fila). Cada producto es una fila distinta, así que no hay
-      // conflicto entre ellos.
-      await Promise.all(productosCotizacion.map(prod => {
-        const stockActual = stockPorProducto.get(prod.producto_id) ?? 0;
-        return supabase
-          .from('productos')
-          .update({ stock: stockActual - prod.cantidad })
-          .eq('id', prod.producto_id);
-      }));
+      const mensajeTexto = construirMensajeCotizacion(
+        {
+          cliente_nombre: formData.nombre,
+          cliente_celular: formData.celular,
+          cliente_departamento: formData.departamento,
+          cliente_provincia: formData.provincia,
+        },
+        productosCotizacion,
+        modulos,
+        subcategorias
+      );
 
-      const { error } = await supabase.from('cotizaciones').insert({
-        cliente_nombre: formData.nombre,
-        cliente_celular: formData.celular,
-        cliente_departamento: formData.departamento,
-        cliente_provincia: formData.provincia,
-        cliente_notas: formData.notas,
-        productos: productosCotizacion,
-        estado: 'PENDIENTE',
-      });
+      const esCotizacionExtensa = productosCotizacion.length > UMBRAL_COTIZACION_EXTENSA;
+      let urlFinal: string;
 
-      if (error) throw error;
-    } catch (error) {
-      await Promise.all(productosCotizacion.map(prod => {
-        const stockOriginal = stockPorProducto.get(prod.producto_id) ?? 0;
-        return supabase
-          .from('productos')
-          .update({ stock: stockOriginal })
-          .eq('id', prod.producto_id);
-      }));
-      if (whatsappWindow && !whatsappWindow.closed) whatsappWindow.close();
-      alert('Error al guardar cotización. Stock revertido.');
-      setSubmitting(false);
-      return;
-    }
-
-    const mensajeTexto = construirMensajeCotizacion(
-      {
-        cliente_nombre: formData.nombre,
-        cliente_celular: formData.celular,
-        cliente_departamento: formData.departamento,
-        cliente_provincia: formData.provincia,
-      },
-      productosCotizacion,
-      modulos,
-      subcategorias
-    );
-
-    const esCotizacionExtensa = productosCotizacion.length > UMBRAL_COTIZACION_EXTENSA;
-
-    if (esCotizacionExtensa) {
-      let copiadoAlPortapapeles = false;
-      try {
-        if (navigator.clipboard?.writeText) {
-          await navigator.clipboard.writeText(mensajeTexto);
-          copiadoAlPortapapeles = true;
+      if (esCotizacionExtensa) {
+        let copiadoAlPortapapeles = false;
+        try {
+          if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(mensajeTexto);
+            copiadoAlPortapapeles = true;
+          }
+        } catch {
+          copiadoAlPortapapeles = false;
         }
-      } catch {
-        copiadoAlPortapapeles = false;
-      }
 
-      if (copiadoAlPortapapeles) {
-        // Con muchos productos el texto es muy largo para ir en la URL
-        // (WhatsApp puede fallar en abrir o llegar con el texto cortado).
-        // Se copia completo al portapapeles y se abre el chat vacío.
-        alert('Tu cotización se copió. Pégala (mantén presionado y "Pegar") en el chat de WhatsApp que se va a abrir.');
-        abrirOEnviarAVentana(whatsappWindow, construirUrlWhatsApp(WHATSAPP_ADMIN));
+        if (copiadoAlPortapapeles) {
+          // Con muchos productos el texto es muy largo para ir en la URL
+          // (WhatsApp puede fallar en abrir o llegar con el texto cortado).
+          // Se copia completo al portapapeles y se abre el chat vacío.
+          alert('Tu cotización se copió. Pégala (mantén presionado y "Pegar") en el chat de WhatsApp que se va a abrir.');
+          urlFinal = construirUrlWhatsApp(WHATSAPP_ADMIN);
+        } else {
+          // Si el portapapeles no está disponible, se mantiene el
+          // comportamiento de siempre (texto en la URL) como respaldo.
+          urlFinal = construirUrlWhatsApp(WHATSAPP_ADMIN, mensajeTexto);
+        }
       } else {
-        // Si el portapapeles no está disponible, se mantiene el
-        // comportamiento de siempre (texto en la URL) como respaldo.
-        abrirOEnviarAVentana(whatsappWindow, construirUrlWhatsApp(WHATSAPP_ADMIN, mensajeTexto));
+        urlFinal = construirUrlWhatsApp(WHATSAPP_ADMIN, mensajeTexto);
       }
-    } else {
-      abrirOEnviarAVentana(whatsappWindow, construirUrlWhatsApp(WHATSAPP_ADMIN, mensajeTexto));
-    }
 
-    clearCart();
-    setSubmitted(true);
+      // Intento automático (funciona en la mayoría de navegadores). El botón
+      // "Abrir WhatsApp" de la pantalla de éxito (usa whatsappUrl) es el
+      // respaldo para navegadores que bloqueen esta navegación tardía.
+      abrirOEnviarAVentana(whatsappWindow, urlFinal);
+      setWhatsappUrl(urlFinal);
+
+      clearCart();
+      setSubmitted(true);
+    } catch (error) {
+      if (whatsappWindow && !whatsappWindow.closed) whatsappWindow.close();
+      alert('No se pudo enviar tu cotización. Revisa tu conexión e intenta de nuevo.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const scrollToForm = () => {
@@ -289,8 +308,20 @@ export default function CarritoPage() {
           </svg>
         </div>
         <h1 className="text-2xl font-bold text-charcoal mb-3">¡Cotización Enviada!</h1>
-        <p className="text-gray-500 mb-2 text-center">Tu mensaje se ha abierto en WhatsApp</p>
-        <p className="text-gray-400 text-sm mb-8 text-center">Envía el mensaje para completar tu solicitud</p>
+        <p className="text-gray-500 mb-2 text-center">Tu cotización quedó registrada</p>
+        <p className="text-gray-400 text-sm mb-8 text-center">
+          Si WhatsApp no se abrió automáticamente, usa el botón de abajo para enviar el mensaje
+        </p>
+        {whatsappUrl && (
+          <a
+            href={whatsappUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-8 py-3 mb-4 bg-green-500 hover:bg-green-600 text-white rounded-full font-semibold transition"
+          >
+            Abrir WhatsApp para enviar tu cotización
+          </a>
+        )}
         <Link href="/" className="px-8 py-3 bg-gold text-white rounded-full font-semibold hover:bg-gold-dark transition">
           Volver al inicio
         </Link>
